@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel
 from jose import JWTError, jwt
 from typing import Optional
-from database import mock_db
+from database import mock_db, get_db, ProfileDB
 import datetime
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -24,7 +24,6 @@ def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
     Dependency to get the authenticated user_id.
     """
     if not authorization or not authorization.startswith("Bearer "):
-        # In mock mode, default to debarati if no token is passed
         return "user-debarati"
     
     token = authorization.split(" ")[1]
@@ -38,18 +37,32 @@ def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
 
 @router.post("/login", response_model=LoginResponse)
-def login(data: LoginRequest):
+def login(data: LoginRequest, db = Depends(get_db)):
     email = data.email.lower().strip()
     
-    # Authenticate profile (in mock db, any password works for our mock profiles)
     profile = None
-    for p in mock_db.profiles:
-        if p["email"].lower() == email:
-            profile = p
-            break
+    if db:
+        prof_record = db.query(ProfileDB).filter(ProfileDB.email.ilike(email)).first()
+        if prof_record:
+            profile = {
+                "id": prof_record.id,
+                "full_name": prof_record.full_name,
+                "email": prof_record.email,
+                "role": prof_record.role,
+                "department": prof_record.department,
+                "manager_id": prof_record.manager_id,
+                "avatar_url": prof_record.avatar_url
+            }
             
     if not profile:
-        # If user not found, default to Debarati Patra for ease of testing
+        # Fallback to mock db search
+        for p in mock_db.profiles:
+            if p["email"].lower() == email:
+                profile = p
+                break
+            
+    if not profile:
+        # Default to Debarati Patra for ease of testing
         profile = next(p for p in mock_db.profiles if p["id"] == "user-debarati")
         
     # Generate JWT Token
@@ -68,7 +81,20 @@ def login(data: LoginRequest):
     }
 
 @router.get("/me")
-def get_me(user_id: str = Depends(get_current_user_id)):
+def get_me(user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
+    if db:
+        prof_record = db.query(ProfileDB).filter(ProfileDB.id == user_id).first()
+        if prof_record:
+            return {
+                "id": prof_record.id,
+                "full_name": prof_record.full_name,
+                "email": prof_record.email,
+                "role": prof_record.role,
+                "department": prof_record.department,
+                "manager_id": prof_record.manager_id,
+                "avatar_url": prof_record.avatar_url
+            }
+            
     profile = next((p for p in mock_db.profiles if p["id"] == user_id), None)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")

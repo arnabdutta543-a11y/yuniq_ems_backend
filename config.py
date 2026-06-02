@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     SUPABASE_URL: Optional[str] = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY: Optional[str] = os.getenv("SUPABASE_KEY", "")
     
+    # PostgreSQL Database URL (provided by user, password URL-encoded)
+    DATABASE_URL: str = os.getenv(
+        "DATABASE_URL", 
+        "postgresql://postgres:asd0987%401234@db.bphgslzwzzxlczpdheig.supabase.co:5432/postgres"
+    )
+    
     # Redis Cloud Settings
     REDIS_HOST: Optional[str] = os.getenv("REDIS_HOST", "")
     REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
@@ -27,14 +33,14 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD", "")
     
     # Mock Mode configuration (force or fallback)
-    FORCE_MOCK: bool = os.getenv("FORCE_MOCK", "true").lower() == "true"
+    FORCE_MOCK: bool = os.getenv("FORCE_MOCK", "false").lower() == "true"
     
     @property
     def is_mock_mode(self) -> bool:
         if self.FORCE_MOCK:
             return True
-        # If any essential credential is empty, run in mock mode
-        if not self.SUPABASE_URL or not self.SUPABASE_KEY:
+        # If no database URL is set, run in mock mode
+        if not self.DATABASE_URL:
             return True
         return False
 
