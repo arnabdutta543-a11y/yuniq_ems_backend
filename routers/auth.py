@@ -44,15 +44,8 @@ def login(data: LoginRequest, db = Depends(get_db)):
     if db:
         prof_record = db.query(ProfileDB).filter(ProfileDB.email.ilike(email)).first()
         if prof_record:
-            profile = {
-                "id": prof_record.id,
-                "full_name": prof_record.full_name,
-                "email": prof_record.email,
-                "role": prof_record.role,
-                "department": prof_record.department,
-                "manager_id": prof_record.manager_id,
-                "avatar_url": prof_record.avatar_url
-            }
+            from routers.profile import serialize_profile
+            profile = serialize_profile(prof_record)
             
     if not profile:
         # Fallback to mock db search
@@ -85,15 +78,8 @@ def get_me(user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
     if db:
         prof_record = db.query(ProfileDB).filter(ProfileDB.id == user_id).first()
         if prof_record:
-            return {
-                "id": prof_record.id,
-                "full_name": prof_record.full_name,
-                "email": prof_record.email,
-                "role": prof_record.role,
-                "department": prof_record.department,
-                "manager_id": prof_record.manager_id,
-                "avatar_url": prof_record.avatar_url
-            }
+            from routers.profile import serialize_profile
+            return serialize_profile(prof_record)
             
     profile = next((p for p in mock_db.profiles if p["id"] == user_id), None)
     if not profile:

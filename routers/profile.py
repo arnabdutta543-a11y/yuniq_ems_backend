@@ -13,7 +13,21 @@ def serialize_profile(p: ProfileDB) -> dict:
         "role": p.role,
         "department": p.department,
         "manager_id": p.manager_id,
-        "avatar_url": p.avatar_url
+        "avatar_url": p.avatar_url,
+        "dob": p.dob.isoformat() if p.dob else None,
+        "gender": p.gender,
+        "address": p.address,
+        "contact_number": p.contact_number,
+        "bank_name": p.bank_name,
+        "account_number": p.account_number,
+        "ifsc_code": p.ifsc_code,
+        "pan": p.pan,
+        "pf_number": p.pf_number,
+        "uan": p.uan,
+        "office": p.office,
+        "joining_date": p.joining_date.isoformat() if p.joining_date else None,
+        "salary": float(p.salary) if p.salary else None,
+        "assigned_laptop": p.assigned_laptop
     }
 
 @router.get("/me")

@@ -101,19 +101,25 @@ def punch_in(user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
             total_hours=0.0,
             activity_log=[{"time": now_str, "action": "Punch-In"}]
         )
-        db.add(new_log)
         
-        # Add Notification
-        new_notif = NotificationDB(
-            id=f"notif-{int(datetime.datetime.now().timestamp())}",
-            user_id=user_id,
-            title="Punched In",
-            message=f"You punched in successfully at {datetime.datetime.now().strftime('%H:%M:%S')}.",
-            read=False,
-            created_at=now_str
-        )
-        db.add(new_notif)
-        db.commit()
+        from sqlalchemy.exc import IntegrityError
+        try:
+            db.add(new_log)
+            # Add Notification
+            new_notif = NotificationDB(
+                id=f"notif-{int(datetime.datetime.now().timestamp())}",
+                user_id=user_id,
+                title="Punched In",
+                message=f"You punched in successfully at {datetime.datetime.now().strftime('%H:%M:%S')}.",
+                read=False,
+                created_at=now_str
+            )
+            db.add(new_notif)
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=400, detail="Active attendance session already exists for today")
+            
         return {"message": "Punched in successfully", "time": now_str}
         
     # Fallback to mock DB

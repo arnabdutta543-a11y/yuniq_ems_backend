@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import datetime
-from database import mock_db, get_db, PayrollDB, ClaimDB
+from database import mock_db, get_db, PayrollDB, ClaimDB, ProfileDB
 from routers.auth import get_current_user_id
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
@@ -16,39 +16,68 @@ class ClaimRequest(BaseModel):
 @router.get("/details")
 def get_payroll_details(user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
     if db:
-        payroll_record = db.query(PayrollDB).filter(PayrollDB.user_id == user_id).first()
-        if not payroll_record:
-            # Dynamically seed live payroll details in Supabase for this employee
-            payroll_record = PayrollDB(
-                user_id=user_id,
-                salary_base=12500.0,
-                salary_allowance=4200.0,
-                tax_deduction=1850.0,
-                increment_history=[
-                    {"id": 1, "date": "2024-04-01", "old_salary": 11000.0, "new_salary": 13500.0, "percentage": 22.7},
-                    {"id": 2, "date": "2025-04-01", "old_salary": 13500.0, "new_salary": 16700.0, "percentage": 23.7}
-                ],
-                payslips=[
-                    {"month": "May 2026", "net": 14850.0, "download_url": "#"},
-                    {"month": "April 2026", "net": 14850.0, "download_url": "#"},
-                    {"month": "March 2026", "net": 14850.0, "download_url": "#"}
-                ]
-            )
-            db.add(payroll_record)
-            db.commit()
-            db.refresh(payroll_record)
+        # Get employee info
+        emp = db.query(ProfileDB).filter(ProfileDB.id == user_id).first()
+        if not emp:
+            raise HTTPException(status_code=404, detail="Employee not found")
             
+        # Get payslips from payslips table (mapped via PayrollDB)
+        payslips_records = db.query(PayrollDB).filter(PayrollDB.user_id == user_id).order_by(PayrollDB.year.desc(), PayrollDB.month.desc()).all()
+        
+        # If no payslips exist, create one for May 2026 based on employee's salary
+        if not payslips_records:
+            salary_val = float(emp.salary) if emp.salary else 1800000.0
+            # If annual, monthly is salary/12. If already monthly, keep as is.
+            monthly_base = salary_val / 12.0 if salary_val >= 100000 else salary_val
+            allowance = monthly_base * 0.10
+            deductions = monthly_base * 0.05
+            net = monthly_base + allowance - deductions
+            
+            new_slip = PayrollDB(
+                user_id=user_id,
+                month=5,
+                year=2026,
+                salary_base=monthly_base,
+                salary_allowance=allowance,
+                tax_deduction=deductions,
+                net=net,
+                status="Paid"
+            )
+            db.add(new_slip)
+            db.commit()
+            db.refresh(new_slip)
+            payslips_records = [new_slip]
+            
+        latest = payslips_records[0]
+        month_names = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+        
+        payslips_list = []
+        for p in payslips_records:
+            month_str = month_names[p.month] if 1 <= p.month <= 12 else str(p.month)
+            payslips_list.append({
+                "month": f"{month_str} {p.year}",
+                "net": float(p.net),
+                "basic_salary": float(p.salary_base),
+                "allowances": float(p.salary_allowance),
+                "deductions": float(p.tax_deduction),
+                "status": p.status
+            })
+            
+        increment_history = [
+            {"id": 1, "date": "2024-04-01", "old_salary": float(latest.salary_base) * 0.8, "new_salary": float(latest.salary_base) * 0.9, "percentage": 12.5},
+            {"id": 2, "date": "2025-04-01", "old_salary": float(latest.salary_base) * 0.9, "new_salary": float(latest.salary_base), "percentage": 11.1}
+        ]
+        
         return {
-            "user_id": payroll_record.user_id,
-            "salary_base": payroll_record.salary_base,
-            "salary_allowance": payroll_record.salary_allowance,
-            "tax_deduction": payroll_record.tax_deduction,
-            "increment_history": payroll_record.increment_history,
-            "payslips": payroll_record.payslips
+            "user_id": user_id,
+            "salary_base": float(latest.salary_base),
+            "salary_allowance": float(latest.salary_allowance),
+            "tax_deduction": float(latest.tax_deduction),
+            "increment_history": increment_history,
+            "payslips": payslips_list
         }
         
     # Fallback to mock DB (if Supabase is disconnected)
-    # Check if the mock_db has payroll for user_id, if not, copy default
     if mock_db.payroll.get("user_id") != user_id:
         mock_db.payroll["user_id"] = user_id
     return mock_db.payroll

@@ -2,7 +2,7 @@ import datetime
 from typing import Dict, List, Any, Optional
 import json
 import os
-from sqlalchemy import create_engine, Column, String, Integer, Float, Date, Boolean, JSON, ForeignKey, Numeric, Text
+from sqlalchemy import create_engine, Column, String, Integer, Float, Date, Boolean, JSON, ForeignKey, Numeric, Text, Index, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from config import settings
@@ -11,38 +11,135 @@ Base = declarative_base()
 
 # SQLAlchemy Models
 
+from sqlalchemy import TypeDecorator, DateTime
+import datetime
+
+class ISO8601DateTime(TypeDecorator):
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            val_clean = value.replace("Z", "+00:00")
+            return datetime.datetime.fromisoformat(val_clean)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        return value.isoformat().replace("+00:00", "") + "Z"
+
 class ProfileDB(Base):
-    __tablename__ = 'profiles'
+    __tablename__ = 'employees'
     id = Column(String(50), primary_key=True)
     full_name = Column(String(100), nullable=False)
     email = Column(String(100), unique=True, nullable=False)
     role = Column(String(100), nullable=False)
     department = Column(String(100), nullable=False)
-    manager_id = Column(String(50), ForeignKey('profiles.id', ondelete='SET NULL'), nullable=True)
-    avatar_url = Column(Text, nullable=True)
+    manager_id = Column(String(50), ForeignKey('employees.id', ondelete='SET NULL'), nullable=True)
+    salary = Column(Numeric, nullable=True)
+    joining_date = Column(Date, nullable=True)
+    personal_email = Column(String(100), nullable=True)
+    office = Column(String(100), nullable=True)
+    status = Column(String(50), nullable=True)
+    password_hash = Column(String(200), nullable=True)
+    assigned_laptop = Column(String(100), nullable=True)
+    dob = Column(Date, nullable=True)
+    gender = Column(String(10), nullable=True)
+    address = Column(Text, nullable=True)
+    contact_number = Column(String(20), nullable=True)
+    bank_name = Column(String(100), nullable=True)
+    account_number = Column(String(50), nullable=True)
+    ifsc_code = Column(String(20), nullable=True)
+    pan = Column(String(20), nullable=True)
+    pf_number = Column(String(50), nullable=True)
+    uan = Column(String(50), nullable=True)
+
+    @property
+    def avatar_url(self):
+        return f"https://api.dicebear.com/7.x/adventurer/svg?seed={self.full_name}"
 
 class AttendanceLogDB(Base):
-    __tablename__ = 'attendance_logs'
-    id = Column(String(50), primary_key=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    __tablename__ = 'attendance'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     date = Column(Date, nullable=False)
-    punch_in_at = Column(String(50), nullable=False)
-    punch_out_at = Column(String(50), nullable=True)
+    punch_in_at = Column(ISO8601DateTime, nullable=False)
+    punch_out_at = Column(ISO8601DateTime, nullable=True)
     total_hours = Column(Float, default=0.0)
-    activity_log = Column(JSON, default=list) # List of dicts [{"time":..., "action":...}]
+    activity_log = Column(JSON, default=list)
+
+    __table_args__ = (
+        Index(
+            'unique_active_attendance_session',
+            'employee_id',
+            'date',
+            unique=True,
+            postgresql_where=text("punch_out_at IS NULL")
+        ),
+    )
+
+    def __init__(self, **kwargs):
+        if 'id' in kwargs and isinstance(kwargs['id'], str) and kwargs['id'].startswith('att-'):
+            kwargs.pop('id')
+        super().__init__(**kwargs)
+
+class TimesheetEntryDB(Base):
+    __tablename__ = 'timesheet_entries'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timesheet_id = Column(Integer, ForeignKey('timesheets.id', ondelete='CASCADE'), nullable=False)
+    date = Column(Date, nullable=False)
+    project = Column(String(50), nullable=False)
+    hours = Column(Float, nullable=False)
+    description = Column(Text, nullable=True)
 
 class TimesheetDB(Base):
     __tablename__ = 'timesheets'
-    id = Column(String(50), primary_key=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     week_start = Column(Date, nullable=False)
     status = Column(String(20), default='Draft')
-    entries = Column(JSON, nullable=False) # List of daily entries
+
+    raw_entries = relationship("TimesheetEntryDB", cascade="all, delete-orphan", backref="timesheet")
+
+    @property
+    def entries(self):
+        sorted_entries = sorted(self.raw_entries, key=lambda x: x.date)
+        return [
+            {
+                "date": entry.date.isoformat(),
+                "project": entry.project,
+                "hours": float(entry.hours),
+                "description": entry.description or ""
+            }
+            for entry in sorted_entries
+        ]
+
+    @entries.setter
+    def entries(self, value_list):
+        self.raw_entries.clear()
+        for item in value_list:
+            self.raw_entries.append(TimesheetEntryDB(
+                date=datetime.date.fromisoformat(item["date"]),
+                project=item["project"],
+                hours=item["hours"],
+                description=item.get("description", "")
+            ))
+
+    def __init__(self, **kwargs):
+        entries_list = kwargs.pop('entries', [])
+        if 'id' in kwargs and isinstance(kwargs['id'], str) and kwargs['id'].startswith('ts-'):
+            kwargs.pop('id')
+        super().__init__(**kwargs)
+        if entries_list:
+            self.entries = entries_list
 
 class LeaveDB(Base):
     __tablename__ = 'leaves'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     leave_type = Column(String(50), nullable=False)
     from_date = Column(Date, nullable=False)
     to_date = Column(Date, nullable=False)
@@ -58,6 +155,8 @@ class HolidayDB(Base):
     name = Column(String(100), nullable=False)
     date = Column(Date, nullable=False)
     day = Column(String(10), nullable=False)
+    location = Column(String(50), default='All')
+    type = Column(String(20), default='National')
 
 class PolicyDB(Base):
     __tablename__ = 'policies'
@@ -68,31 +167,60 @@ class PolicyDB(Base):
     published_at = Column(Date, nullable=False)
 
 class FeedbackDB(Base):
-    __tablename__ = 'feedbacks'
-    id = Column(String(50), primary_key=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
-    reviewer_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
-    feedback_type = Column(String(20), nullable=False) # peer/manager
+    __tablename__ = 'performance_reviews'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     year = Column(Integer, nullable=False)
-    rating_work_quality = Column(Integer, nullable=False)
-    rating_collaboration = Column(Integer, nullable=False)
-    rating_leadership = Column(Integer, nullable=False)
-    comments = Column(Text, nullable=True)
-    project_ratings = Column(JSON, default=dict)
+    rating_work_quality = Column("quality_rating", Float, nullable=False)
+    rating_collaboration = Column("collaboration_rating", Float, nullable=False)
+    rating_leadership = Column("leadership_rating", Float, nullable=False)
+    comments = Column("manager_comments", Text, nullable=True)
+
+    @property
+    def feedback_type(self):
+        return 'manager'
+
+    @property
+    def reviewer_id(self):
+        return 'user-saket'
+
+    @property
+    def project_ratings(self):
+        return {"Decisions": float(self.rating_work_quality or 4.5)}
+
+    def __init__(self, **kwargs):
+        kwargs.pop('id', None)
+        kwargs.pop('reviewer_id', None)
+        kwargs.pop('feedback_type', None)
+        kwargs.pop('project_ratings', None)
+        if 'rating_work_quality' not in kwargs and 'quality_rating' in kwargs:
+            kwargs['rating_work_quality'] = kwargs.pop('quality_rating')
+        if 'rating_collaboration' not in kwargs and 'collaboration_rating' in kwargs:
+            kwargs['rating_collaboration'] = kwargs.pop('collaboration_rating')
+        if 'rating_leadership' not in kwargs and 'leadership_rating' in kwargs:
+            kwargs['rating_leadership'] = kwargs.pop('leadership_rating')
+        if 'comments' not in kwargs and 'manager_comments' in kwargs:
+            kwargs['comments'] = kwargs.pop('manager_comments')
+        super().__init__(**kwargs)
 
 class PromotionDB(Base):
     __tablename__ = 'promotions'
-    id = Column(String(50), primary_key=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     old_role = Column(String(100), nullable=False)
     new_role = Column(String(100), nullable=False)
     date = Column(Date, nullable=False)
     details = Column(Text, nullable=True)
 
+    def __init__(self, **kwargs):
+        if 'id' in kwargs and isinstance(kwargs['id'], str) and kwargs['id'].startswith('promo-'):
+            kwargs.pop('id')
+        super().__init__(**kwargs)
+
 class TravelRequestDB(Base):
     __tablename__ = 'travel_requests'
-    id = Column(String(50), primary_key=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     destination = Column(String(100), nullable=False)
     departure_date = Column(Date, nullable=False)
     return_date = Column(Date, nullable=False)
@@ -100,19 +228,29 @@ class TravelRequestDB(Base):
     selected_flight = Column(JSON, nullable=True)
     selected_hotel = Column(JSON, nullable=True)
 
+    def __init__(self, **kwargs):
+        if 'id' in kwargs and isinstance(kwargs['id'], str) and kwargs['id'].startswith('travel-'):
+            kwargs.pop('id')
+        super().__init__(**kwargs)
+
 class NotificationDB(Base):
     __tablename__ = 'notifications'
-    id = Column(String(50), primary_key=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     title = Column(String(150), nullable=False)
     message = Column(Text, nullable=False)
     read = Column(Boolean, default=False)
-    created_at = Column(String(50), nullable=False)
+    created_at = Column(ISO8601DateTime, nullable=False)
+
+    def __init__(self, **kwargs):
+        if 'id' in kwargs and isinstance(kwargs['id'], str) and kwargs['id'].startswith('notif-'):
+            kwargs.pop('id')
+        super().__init__(**kwargs)
 
 class SkillDB(Base):
     __tablename__ = 'skills'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     skill_name = Column(String(100), nullable=False)
     proficiency = Column(Integer, nullable=False)
     category = Column(String(50), nullable=False)
@@ -120,7 +258,7 @@ class SkillDB(Base):
 class CertificationDB(Base):
     __tablename__ = 'certifications'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     name = Column(String(150), nullable=False)
     authority = Column(String(100), nullable=False)
     issued_date = Column(Date, nullable=False)
@@ -130,7 +268,7 @@ class CertificationDB(Base):
 class OkrDB(Base):
     __tablename__ = 'okrs'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     type = Column(String(20), nullable=False)
     objective = Column(Text, nullable=False)
     key_results = Column(JSON, nullable=False)
@@ -141,7 +279,7 @@ class OkrDB(Base):
 class RecognitionDB(Base):
     __tablename__ = 'recognitions'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     award_type = Column(String(50), nullable=False)
     title = Column(String(150), nullable=False)
     description = Column(Text, nullable=False)
@@ -151,7 +289,7 @@ class RecognitionDB(Base):
 class TrainingDB(Base):
     __tablename__ = 'trainings'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     course_name = Column(String(150), nullable=False)
     provider = Column(String(100), nullable=False)
     status = Column(String(30), nullable=False)
@@ -159,19 +297,24 @@ class TrainingDB(Base):
     recommended_by_ai = Column(Boolean, default=False)
 
 class PayrollDB(Base):
-    __tablename__ = 'payrolls'
+    __tablename__ = 'payslips'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), unique=True, nullable=False)
-    salary_base = Column(Float, nullable=False)
-    salary_allowance = Column(Float, nullable=False)
-    tax_deduction = Column(Float, nullable=False)
-    increment_history = Column(JSON, default=list)
-    payslips = Column(JSON, default=list)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
+    month = Column(Integer, nullable=False)
+    year = Column(Integer, nullable=False)
+    salary_base = Column("basic_salary", Float, nullable=False)
+    salary_allowance = Column("allowances", Float, nullable=False)
+    tax_deduction = Column("deductions", Float, nullable=False)
+    net = Column("net_salary", Float, nullable=False)
+    status = Column(String(20), default='Paid')
+    paid_days = Column(Integer, default=30)
+    lop_days = Column(Integer, default=0)
+    leave_balance = Column(Float, default=10.5)
 
 class ClaimDB(Base):
     __tablename__ = 'claims'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
     amount = Column(Float, nullable=False)
     category = Column(String(50), nullable=False)
     description = Column(Text, nullable=False)
@@ -179,13 +322,26 @@ class ClaimDB(Base):
     status = Column(String(20), default='Pending')
 
 class AssetDB(Base):
-    __tablename__ = 'assets'
+    __tablename__ = 'resources'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(50), ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
-    asset_name = Column(String(150), nullable=False)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=True)
+    asset_name = Column("name", String(150), nullable=False)
     serial_number = Column(String(100), nullable=False)
-    assigned_date = Column(Date, nullable=False)
     status = Column(String(30), default='Assigned')
+
+class AssetRequestDB(Base):
+    __tablename__ = 'asset_requests'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
+    request_type = Column(String(50), nullable=False)
+    description = Column(Text, nullable=False)
+    status = Column(String(30), default='Submitted')
+    created_at = Column(ISO8601DateTime, nullable=False)
+    admin_notes = Column(Text, nullable=True)
+
+    @property
+    def assigned_date(self):
+        return datetime.date(2025, 10, 15)
 
 class AnnouncementDB(Base):
     __tablename__ = 'announcements'
@@ -414,6 +570,42 @@ def init_db():
         # 1. Create all tables if they don't exist
         Base.metadata.create_all(bind=engine)
         print("SQLAlchemy Base schema initialized in database.")
+
+        # Ensure new columns and unique active index exist in PostgreSQL (dynamic ALTERs)
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS dob DATE;"))
+            conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS gender VARCHAR(10) DEFAULT 'Female';"))
+            conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS address TEXT;"))
+            conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS contact_number VARCHAR(20);"))
+            conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_name VARCHAR(100);"))
+            conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS account_number VARCHAR(50);"))
+            conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS ifsc_code VARCHAR(20);"))
+            conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS pan VARCHAR(20);"))
+            conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS pf_number VARCHAR(50);"))
+            conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS uan VARCHAR(50);"))
+            
+            conn.execute(text("ALTER TABLE payslips ADD COLUMN IF NOT EXISTS paid_days INTEGER DEFAULT 30;"))
+            conn.execute(text("ALTER TABLE payslips ADD COLUMN IF NOT EXISTS lop_days INTEGER DEFAULT 0;"))
+            conn.execute(text("ALTER TABLE payslips ADD COLUMN IF NOT EXISTS leave_balance FLOAT DEFAULT 10.5;"))
+            
+            conn.execute(text("ALTER TABLE holidays ADD COLUMN IF NOT EXISTS location VARCHAR(50) DEFAULT 'All';"))
+            conn.execute(text("ALTER TABLE holidays ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'National';"))
+            
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS unique_active_attendance_session ON attendance (employee_id, date) WHERE punch_out_at IS NULL;"))
+            
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS asset_requests (
+                    id SERIAL PRIMARY KEY,
+                    employee_id VARCHAR(50) NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                    request_type VARCHAR(50) NOT NULL,
+                    description TEXT NOT NULL,
+                    status VARCHAR(30) DEFAULT 'Submitted',
+                    created_at TIMESTAMP NOT NULL,
+                    admin_notes TEXT
+                );
+            """))
+            conn.commit()
+        print("Raw DDL migrations executed successfully.")
         
         # 2. Seed tables if they are empty
         db = SessionLocal()
@@ -428,20 +620,82 @@ def init_db():
                     email=p["email"],
                     role=p["role"],
                     department=p["department"],
-                    manager_id=p["manager_id"]
+                    manager_id=p["manager_id"],
+                    dob=datetime.date(1995, 5, 15) if p["id"] == "user-debarati" else datetime.date(1990, 8, 20),
+                    gender="Female" if p["id"] in ["user-debarati", "user-debolina", "user-anjana", "user-annesha"] else "Male",
+                    address="123 Chennai Main Rd, OMR, Chennai, TN" if p["id"] == "user-debarati" else "456 OMR Road, Bangalore, KA",
+                    contact_number="+91 98765 43210" if p["id"] == "user-debarati" else "+91 99999 88888",
+                    bank_name="HDFC Bank" if p["id"] == "user-debarati" else "ICICI Bank",
+                    account_number="50100432109876" if p["id"] == "user-debarati" else "304561237890",
+                    ifsc_code="HDFC0000123" if p["id"] == "user-debarati" else "ICIC0003045",
+                    pan="ABCDE1234F" if p["id"] == "user-debarati" else "XYZW9876C",
+                    pf_number="TN/MAS/0012345/000/0001234" if p["id"] == "user-debarati" else "KA/BLR/0098765/000/0005678",
+                    uan="100123456789" if p["id"] == "user-debarati" else "100987654321",
+                    office="Chennai" if p["id"] == "user-debarati" else "Bangalore"
                 ))
+            db.commit()
+
+        # Update existing user-debarati profile with detail columns if they are null
+        debarati = db.query(ProfileDB).filter(ProfileDB.id == 'user-debarati').first()
+        if debarati and not debarati.bank_name:
+            print("Updating user-debarati's detailed profile fields...")
+            debarati.dob = datetime.date(1995, 5, 15)
+            debarati.gender = "Female"
+            debarati.address = "123 Chennai Main Rd, OMR, Chennai, TN"
+            debarati.contact_number = "+91 98765 43210"
+            debarati.bank_name = "HDFC Bank"
+            debarati.account_number = "50100432109876"
+            debarati.ifsc_code = "HDFC0000123"
+            debarati.pan = "ABCDE1234F"
+            debarati.pf_number = "TN/MAS/0012345/000/0001234"
+            debarati.uan = "100123456789"
+            debarati.office = "Chennai"
             db.commit()
             
         # Seed Holidays
         if db.query(HolidayDB).count() == 0:
             print("Seeding holidays table...")
-            for h in mock_db.holidays:
+            holiday_details = [
+                {"name": "New Year's Day", "date": "2026-01-01", "day": "Thu", "location": "All", "type": "National"},
+                {"name": "Pongal", "date": "2026-01-14", "day": "Wed", "location": "Chennai", "type": "State"},
+                {"name": "Republic Day", "date": "2026-01-26", "day": "Mon", "location": "All", "type": "National"},
+                {"name": "Makar Sankranti", "date": "2026-01-14", "day": "Wed", "location": "Bangalore", "type": "State"},
+                {"name": "Karnataka Rajyotsava", "date": "2026-11-01", "day": "Sun", "location": "Bangalore", "type": "State"},
+                {"name": "Independence Day", "date": "2026-08-15", "day": "Sat", "location": "All", "type": "National"},
+                {"name": "Ganesh Chaturthi", "date": "2026-09-14", "day": "Mon", "location": "Mumbai", "type": "State"},
+                {"name": "Founders Day", "date": "2026-10-15", "day": "Thu", "location": "All", "type": "Organization"},
+                {"name": "Gandhi Jayanthi", "date": "2026-10-02", "day": "Fri", "location": "All", "type": "National"},
+                {"name": "Christmas", "date": "2026-12-25", "day": "Fri", "location": "All", "type": "National"}
+            ]
+            for h in holiday_details:
                 db.add(HolidayDB(
                     name=h["name"],
                     date=datetime.date.fromisoformat(h["date"]),
-                    day=h["day"]
+                    day=h["day"],
+                    location=h["location"],
+                    type=h["type"]
                 ))
             db.commit()
+            
+        # Backfill location/type for existing holidays if they are empty
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE holidays SET location = 'All', type = 'National' WHERE location IS NULL OR type IS NULL;"))
+            conn.execute(text("""
+                INSERT INTO holidays (name, date, day, location, type) 
+                SELECT 'Pongal', '2026-01-14', 'Wed', 'Chennai', 'State'
+                WHERE NOT EXISTS (SELECT 1 FROM holidays WHERE name = 'Pongal' AND location = 'Chennai');
+            """))
+            conn.execute(text("""
+                INSERT INTO holidays (name, date, day, location, type) 
+                SELECT 'Karnataka Rajyotsava', '2026-11-01', 'Sun', 'Bangalore', 'State'
+                WHERE NOT EXISTS (SELECT 1 FROM holidays WHERE name = 'Karnataka Rajyotsava' AND location = 'Bangalore');
+            """))
+            conn.execute(text("""
+                INSERT INTO holidays (name, date, day, location, type) 
+                SELECT 'Founders Day', '2026-10-15', 'Thu', 'All', 'Organization'
+                WHERE NOT EXISTS (SELECT 1 FROM holidays WHERE name = 'Founders Day');
+            """))
+            conn.commit()
             
         # Seed Policies
         if db.query(PolicyDB).count() == 0:
