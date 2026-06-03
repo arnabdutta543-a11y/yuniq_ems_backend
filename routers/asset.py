@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 import datetime
 from database import mock_db, get_db, AssetDB, NotificationDB, ProfileDB, AssetRequestDB
 from routers.auth import get_current_user_id
