@@ -289,3 +289,23 @@ def get_attendance_statistics(user_id: str = Depends(get_current_user_id), db = 
         "this_week": round(week_hours, 2),
         "this_month": round(month_hours, 2)
     }
+
+@router.get("/history")
+def get_attendance_history(user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
+    if db:
+        logs = db.query(AttendanceLogDB).filter(
+            AttendanceLogDB.user_id == user_id
+        ).order_by(AttendanceLogDB.date.desc()).limit(30).all()
+        
+        return [{
+            "id": log.id,
+            "date": log.date.isoformat(),
+            "punch_in_at": log.punch_in_at,
+            "punch_out_at": log.punch_out_at,
+            "total_hours": float(log.total_hours)
+        } for log in logs]
+        
+    # Fallback to mock DB
+    user_logs = [log for log in mock_db.attendance_logs if log["user_id"] == user_id]
+    user_logs = sorted(user_logs, key=lambda x: x["date"], reverse=True)[:30]
+    return user_logs
