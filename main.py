@@ -20,6 +20,7 @@ import routers.payroll
 import routers.asset
 import routers.announcement
 import routers.ai_analyzer
+import routers.upload
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -47,6 +48,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi.staticfiles import StaticFiles
+import os
+os.makedirs("uploads", exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 # Include Routers
 app.include_router(routers.auth.router, prefix="/api")
 app.include_router(routers.profile.router, prefix="/api")
@@ -65,6 +71,7 @@ app.include_router(routers.payroll.router, prefix="/api")
 app.include_router(routers.asset.router, prefix="/api")
 app.include_router(routers.announcement.router, prefix="/api")
 app.include_router(routers.ai_analyzer.router, prefix="/api")
+app.include_router(routers.upload.router, prefix="/api")
 
 @app.get("/")
 def read_root():

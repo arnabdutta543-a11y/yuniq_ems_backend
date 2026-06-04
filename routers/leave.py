@@ -14,8 +14,16 @@ class ApplyLeaveRequest(BaseModel):
     to_date: str # YYYY-MM-DD
     num_days: float
     reason: str
+    is_half_day: Optional[bool] = False
+    half_day_session: Optional[str] = None
+    attachments: Optional[str] = "[]"
 
 def serialize_leave(l: LeaveDB) -> dict:
+    import json
+    try:
+        attachments_list = json.loads(l.attachments) if l.attachments else []
+    except Exception:
+        attachments_list = []
     return {
         "id": l.id,
         "user_id": l.user_id,
@@ -26,7 +34,10 @@ def serialize_leave(l: LeaveDB) -> dict:
         "reason": l.reason,
         "status": l.status,
         "applied_date": l.applied_date.isoformat(),
-        "recalled": l.recalled
+        "recalled": l.recalled,
+        "is_half_day": l.is_half_day,
+        "half_day_session": l.half_day_session,
+        "attachments": attachments_list
     }
 
 @router.get("/my-leaves")
@@ -35,17 +46,13 @@ def get_my_leaves(user_id: str = Depends(get_current_user_id), db = Depends(get_
         leaves_records = db.query(LeaveDB).filter(LeaveDB.user_id == user_id).order_by(LeaveDB.from_date.desc()).all()
         return [serialize_leave(l) for l in leaves_records]
         
-    # Fallback to mock DB
-    user_leaves = [l for l in mock_db.leaves if l["user_id"] == user_id]
-    user_leaves.sort(key=lambda x: x["from_date"], reverse=True)
-    return user_leaves
+    return []
 
 @router.get("/balance")
 def get_leave_balance(user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
     if db:
         leaves_records = db.query(LeaveDB).filter(LeaveDB.user_id == user_id).all()
         approved_taken = sum(l.num_days for l in leaves_records if l.status == "Approved")
-        recalled_taken = sum(l.num_days for l in leaves_records if l.status == "Recalled")
         
         base_balance = 29.0
         taken = approved_taken
@@ -56,17 +63,57 @@ def get_leave_balance(user_id: str = Depends(get_current_user_id), db = Depends(
             "lop": 0.0
         }
         
-    # Fallback to mock DB
-    user_leaves = [l for l in mock_db.leaves if l["user_id"] == user_id]
-    approved_taken = sum(l["num_days"] for l in user_leaves if l["status"] == "Approved")
-    base_balance = 29.0
-    taken = approved_taken
-    balance = base_balance - taken
     return {
-        "balance": max(0.0, balance),
-        "taken": taken,
+        "balance": 29.0,
+        "taken": 0.0,
         "lop": 0.0
     }
+
+@router.get("/calculate-days")
+def calculate_days(
+    from_date: str,
+    to_date: str,
+    is_half_day: bool = False,
+    half_day_session: str = None,
+    user_id: str = Depends(get_current_user_id),
+    db = Depends(get_db)
+):
+    try:
+        from_d = datetime.date.fromisoformat(from_date)
+        to_d = datetime.date.fromisoformat(to_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format (use YYYY-MM-DD)")
+        
+    if from_d > to_d:
+        return {"num_days": 0.0}
+        
+    if db:
+        emp = db.query(ProfileDB).filter(ProfileDB.id == user_id).first()
+        office = emp.office if emp else "All"
+        if not office:
+            office = "All"
+            
+        from database import HolidayDB
+        holidays = db.query(HolidayDB).filter(
+            HolidayDB.date >= from_d,
+            HolidayDB.date <= to_d,
+            (HolidayDB.location == 'All') | (HolidayDB.location.ilike(office))
+        ).all()
+        holiday_dates = {h.date for h in holidays}
+        
+        days_count = 0.0
+        curr = from_d
+        while curr <= to_d:
+            if curr.weekday() not in (5, 6) and curr not in holiday_dates:
+                days_count += 1.0
+            curr += datetime.timedelta(days=1)
+            
+        if is_half_day:
+            days_count = 0.5 if days_count > 0 else 0.0
+            
+        return {"num_days": days_count}
+        
+    return {"num_days": 1.0}
 
 @router.post("/apply")
 def apply_leave(data: ApplyLeaveRequest, user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
@@ -82,16 +129,43 @@ def apply_leave(data: ApplyLeaveRequest, user_id: str = Depends(get_current_user
     now_str = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
     
     if db:
+        # Calculate working days
+        emp = db.query(ProfileDB).filter(ProfileDB.id == user_id).first()
+        office = emp.office if emp else "All"
+        if not office:
+            office = "All"
+            
+        from database import HolidayDB
+        holidays = db.query(HolidayDB).filter(
+            HolidayDB.date >= from_d,
+            HolidayDB.date <= to_d,
+            (HolidayDB.location == 'All') | (HolidayDB.location.ilike(office))
+        ).all()
+        holiday_dates = {h.date for h in holidays}
+        
+        days_count = 0.0
+        curr = from_d
+        while curr <= to_d:
+            if curr.weekday() not in (5, 6) and curr not in holiday_dates:
+                days_count += 1.0
+            curr += datetime.timedelta(days=1)
+            
+        if data.is_half_day:
+            days_count = 0.5 if days_count > 0 else 0.0
+            
         new_leave = LeaveDB(
             user_id=user_id,
             leave_type=data.leave_type,
             from_date=from_d,
             to_date=to_d,
-            num_days=data.num_days,
+            num_days=days_count,
             reason=data.reason,
             status="Pending",
             applied_date=datetime.date.today(),
-            recalled=False
+            recalled=False,
+            is_half_day=data.is_half_day,
+            half_day_session=data.half_day_session if data.is_half_day else None,
+            attachments=data.attachments
         )
         db.add(new_leave)
         
@@ -121,38 +195,7 @@ def apply_leave(data: ApplyLeaveRequest, user_id: str = Depends(get_current_user
                 )
         return {"message": "Leave applied successfully", "leave": serialize_leave(new_leave)}
         
-    # Fallback to mock DB
-    new_leave = {
-        "id": len(mock_db.leaves) + 1,
-        "user_id": user_id,
-        "leave_type": data.leave_type,
-        "from_date": data.from_date,
-        "to_date": data.to_date,
-        "num_days": data.num_days,
-        "reason": data.reason,
-        "status": "Pending",
-        "applied_date": datetime.date.today().isoformat(),
-        "recalled": False
-    }
-    mock_db.leaves.append(new_leave)
-    profile = next(p for p in mock_db.profiles if p["id"] == user_id)
-    manager = next((p for p in mock_db.profiles if p["id"] == profile["manager_id"]), None)
-    if manager:
-        send_email_notification(
-            to_email=manager["email"],
-            subject=f"Leave Application: {profile['full_name']}",
-            body_html=f"<p>{profile['full_name']} has applied for leave from {data.from_date} to {data.to_date}. Reason: {data.reason}</p>",
-            body_text=f"{profile['full_name']} applied for leave from {data.from_date} to {data.to_date}.\nReason: {data.reason}"
-        )
-    mock_db.notifications.append({
-        "id": f"notif-{len(mock_db.notifications) + 1}",
-        "user_id": user_id,
-        "title": "Leave Applied",
-        "message": f"Your leave request for {data.from_date} has been submitted for approval.",
-        "read": False,
-        "created_at": now_str
-    })
-    return {"message": "Leave applied successfully", "leave": new_leave}
+    return {"message": "Leave applied successfully"}
 
 @router.post("/recall/{leave_id}")
 def recall_leave(leave_id: int, user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
@@ -217,6 +260,11 @@ def get_team_leaves(month: int, year: int, user_id: str = Depends(get_current_us
             
             if starts_in_month or ends_in_month:
                 peer_p = next(p for p in peers if p.id == l.user_id)
+                import json
+                try:
+                    atts = json.loads(l.attachments) if l.attachments else []
+                except Exception:
+                    atts = []
                 team_leaves.append({
                     "id": l.id,
                     "user_id": l.user_id,
@@ -225,7 +273,8 @@ def get_team_leaves(month: int, year: int, user_id: str = Depends(get_current_us
                     "from_date": l.from_date.isoformat(),
                     "to_date": l.to_date.isoformat(),
                     "num_days": l.num_days,
-                    "status": l.status
+                    "status": l.status,
+                    "attachments": atts
                 })
         return team_leaves
         
@@ -256,7 +305,8 @@ def get_team_leaves(month: int, year: int, user_id: str = Depends(get_current_us
                     "from_date": l["from_date"],
                     "to_date": l["to_date"],
                     "num_days": l["num_days"],
-                    "status": l["status"]
+                    "status": l["status"],
+                    "attachments": l.get("attachments", [])
                 })
     return team_leaves
 export_router = router

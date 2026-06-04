@@ -56,9 +56,12 @@ class ProfileDB(Base):
     pan = Column(String(20), nullable=True)
     pf_number = Column(String(50), nullable=True)
     uan = Column(String(50), nullable=True)
+    profile_photo = Column(Text, nullable=True)
 
     @property
     def avatar_url(self):
+        if self.profile_photo:
+            return self.profile_photo
         return f"https://api.dicebear.com/7.x/adventurer/svg?seed={self.full_name}"
 
 class AttendanceLogDB(Base):
@@ -125,7 +128,7 @@ class TimesheetDB(Base):
                 date=datetime.date.fromisoformat(item["date"]),
                 project=item["project"],
                 hours=item["hours"],
-                description=item.get("description", "")
+                description=item.get("description") or ""
             ))
 
     def __init__(self, **kwargs):
@@ -148,6 +151,9 @@ class LeaveDB(Base):
     status = Column(String(20), default='Pending')
     applied_date = Column(Date, nullable=False)
     recalled = Column(Boolean, default=False)
+    is_half_day = Column(Boolean, default=False)
+    half_day_session = Column(String(50), nullable=True)
+    attachments = Column(Text, nullable=True)
 
 class HolidayDB(Base):
     __tablename__ = 'holidays'
@@ -275,6 +281,55 @@ class OkrDB(Base):
     progress = Column(Float, default=0.0)
     year = Column(Integer, nullable=False)
     quarter = Column(Integer, nullable=False)
+    due_date = Column(Date, nullable=True)
+    success_criteria = Column(Text, nullable=True)
+    assigned_by = Column(String(50), nullable=True)
+    evidence_url = Column(Text, nullable=True)
+    completion_remarks = Column(Text, nullable=True)
+    appraisal_submitted = Column(Boolean, default=False)
+    appraisal_summary = Column(Text, nullable=True)
+    appraisal_evidence = Column(Text, nullable=True)
+
+class ProfileChangeRequestDB(Base):
+    __tablename__ = 'profile_change_requests'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    employee_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
+    request_data = Column(JSON, nullable=False)
+    status = Column(String(20), default='Pending')
+    created_at = Column(ISO8601DateTime, nullable=False)
+    reviewed_at = Column(ISO8601DateTime, nullable=True)
+    reviewed_by = Column(String(50), nullable=True)
+    hr_remarks = Column(Text, nullable=True)
+
+class SalaryRevisionDB(Base):
+    __tablename__ = 'salary_revisions'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    employee_id = Column(String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
+    change_date = Column(Date, nullable=False)
+    old_salary = Column(Numeric, nullable=False)
+    new_salary = Column(Numeric, nullable=False)
+    percentage = Column(Float, nullable=False)
+    remarks = Column(Text, nullable=True)
+
+class PeerReviewAssignmentDB(Base):
+    __tablename__ = 'peer_review_assignments'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    employee_id = Column(String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
+    reviewer_id = Column(String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
+    year = Column(Integer, nullable=False)
+    status = Column(String(20), default='Pending')
+
+class SelfAppraisalDB(Base):
+    __tablename__ = 'self_appraisals'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    employee_id = Column(String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
+    year = Column(Integer, nullable=False)
+    q1_achievements = Column(Text, nullable=True)
+    q2_challenges = Column(Text, nullable=True)
+    linked_goals = Column(JSON, default=list)
+    supporting_docs = Column(JSON, default=list)
+    voice_summary_url = Column(Text, nullable=True)
+    submitted_at = Column(ISO8601DateTime, nullable=False)
 
 class RecognitionDB(Base):
     __tablename__ = 'recognitions'
@@ -583,6 +638,20 @@ def init_db():
             conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS pan VARCHAR(20);"))
             conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS pf_number VARCHAR(50);"))
             conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS uan VARCHAR(50);"))
+            conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS profile_photo TEXT;"))
+            
+            conn.execute(text("ALTER TABLE leaves ADD COLUMN IF NOT EXISTS is_half_day BOOLEAN DEFAULT FALSE;"))
+            conn.execute(text("ALTER TABLE leaves ADD COLUMN IF NOT EXISTS half_day_session VARCHAR(50);"))
+            conn.execute(text("ALTER TABLE leaves ADD COLUMN IF NOT EXISTS attachments TEXT;"))
+
+            conn.execute(text("ALTER TABLE okrs ADD COLUMN IF NOT EXISTS due_date DATE;"))
+            conn.execute(text("ALTER TABLE okrs ADD COLUMN IF NOT EXISTS success_criteria TEXT;"))
+            conn.execute(text("ALTER TABLE okrs ADD COLUMN IF NOT EXISTS assigned_by VARCHAR(50);"))
+            conn.execute(text("ALTER TABLE okrs ADD COLUMN IF NOT EXISTS evidence_url TEXT;"))
+            conn.execute(text("ALTER TABLE okrs ADD COLUMN IF NOT EXISTS completion_remarks TEXT;"))
+            conn.execute(text("ALTER TABLE okrs ADD COLUMN IF NOT EXISTS appraisal_submitted BOOLEAN DEFAULT FALSE;"))
+            conn.execute(text("ALTER TABLE okrs ADD COLUMN IF NOT EXISTS appraisal_summary TEXT;"))
+            conn.execute(text("ALTER TABLE okrs ADD COLUMN IF NOT EXISTS appraisal_evidence TEXT;"))
             
             conn.execute(text("ALTER TABLE payslips ADD COLUMN IF NOT EXISTS paid_days INTEGER DEFAULT 30;"))
             conn.execute(text("ALTER TABLE payslips ADD COLUMN IF NOT EXISTS lop_days INTEGER DEFAULT 0;"))
@@ -602,6 +671,51 @@ def init_db():
                     status VARCHAR(30) DEFAULT 'Submitted',
                     created_at TIMESTAMP NOT NULL,
                     admin_notes TEXT
+                );
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS profile_change_requests (
+                    id SERIAL PRIMARY KEY,
+                    employee_id VARCHAR(50) NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                    request_data JSON NOT NULL,
+                    status VARCHAR(20) DEFAULT 'Pending',
+                    created_at TIMESTAMP NOT NULL,
+                    reviewed_at TIMESTAMP,
+                    reviewed_by VARCHAR(50),
+                    hr_remarks TEXT
+                );
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS salary_revisions (
+                    id SERIAL PRIMARY KEY,
+                    employee_id VARCHAR(50) NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                    change_date DATE NOT NULL,
+                    old_salary NUMERIC NOT NULL,
+                    new_salary NUMERIC NOT NULL,
+                    percentage FLOAT NOT NULL,
+                    remarks TEXT
+                );
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS peer_review_assignments (
+                    id SERIAL PRIMARY KEY,
+                    employee_id VARCHAR(50) NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                    reviewer_id VARCHAR(50) NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                    year INTEGER NOT NULL,
+                    status VARCHAR(20) DEFAULT 'Pending'
+                );
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS self_appraisals (
+                    id SERIAL PRIMARY KEY,
+                    employee_id VARCHAR(50) NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                    year INTEGER NOT NULL,
+                    q1_achievements TEXT,
+                    q2_challenges TEXT,
+                    linked_goals JSON DEFAULT '[]',
+                    supporting_docs JSON DEFAULT '[]',
+                    voice_summary_url TEXT,
+                    submitted_at TIMESTAMP NOT NULL
                 );
             """))
             conn.commit()
@@ -947,6 +1061,22 @@ def init_db():
                     content=kb["content"],
                     url=kb["url"]
                 ))
+            db.commit()
+            
+        # Seed Salary Revisions
+        if db.query(SalaryRevisionDB).count() == 0:
+            print("Seeding salary revisions table...")
+            db.add(SalaryRevisionDB(employee_id="user-debarati", change_date=datetime.date(2024, 4, 1), old_salary=11000.0, new_salary=13500.0, percentage=22.7, remarks="Annual performance cycle revision"))
+            db.add(SalaryRevisionDB(employee_id="user-debarati", change_date=datetime.date(2025, 4, 1), old_salary=13500.0, new_salary=16700.0, percentage=23.7, remarks="Promoted to Senior Consultant revision"))
+            db.commit()
+
+        # Seed Peer Review Assignments
+        if db.query(PeerReviewAssignmentDB).count() == 0:
+            print("Seeding peer review assignments table...")
+            db.add(PeerReviewAssignmentDB(employee_id="user-debarati", reviewer_id="user-abhyudaya", year=2026, status="Pending"))
+            db.add(PeerReviewAssignmentDB(employee_id="user-debarati", reviewer_id="user-anjana", year=2026, status="Pending"))
+            db.add(PeerReviewAssignmentDB(employee_id="user-abhyudaya", reviewer_id="user-debarati", year=2026, status="Pending"))
+            db.add(PeerReviewAssignmentDB(employee_id="user-ajay", reviewer_id="user-debarati", year=2026, status="Pending"))
             db.commit()
             
         db.close()
