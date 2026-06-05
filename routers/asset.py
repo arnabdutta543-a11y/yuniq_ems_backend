@@ -26,10 +26,13 @@ def get_assets(user_id: str = Depends(get_current_user_id), db = Depends(get_db)
             "id": a.id,
             "user_id": a.user_id,
             "asset_name": a.asset_name,
+            "asset_code": a.asset_id,
             "serial_number": a.serial_number,
-            "assigned_date": a.assigned_date.isoformat(),
+            "assigned_date": a.assigned_date.isoformat() if a.assigned_date else None,
             "status": a.status
         } for a in assets]
+
+
         
     return [a for a in mock_db.assets if a["user_id"] == user_id]
 
@@ -146,6 +149,7 @@ def action_asset_request(request_id: int, data: AssetRequestAction, db = Depends
             raise HTTPException(status_code=404, detail="Request not found")
         
         req.status = data.action
+        req.updated_at = datetime.datetime.now()
         if data.admin_notes is not None:
             req.admin_notes = data.admin_notes
             

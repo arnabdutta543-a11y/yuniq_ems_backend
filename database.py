@@ -57,6 +57,11 @@ class ProfileDB(Base):
     pf_number = Column(String(50), nullable=True)
     uan = Column(String(50), nullable=True)
     profile_photo = Column(Text, nullable=True)
+    paid_leaves = Column(Integer, nullable=False, default=24)
+    leave_balance = Column(Integer, nullable=False, default=24)
+    lop_days = Column(Integer, nullable=False, default=0)
+    leave_year = Column(Integer, nullable=False, default=2026)
+    admin_portal_access = Column(Boolean, nullable=False, default=False)
 
     @property
     def avatar_url(self):
@@ -161,6 +166,7 @@ class HolidayDB(Base):
     name = Column(String(100), nullable=False)
     date = Column(Date, nullable=False)
     day = Column(String(10), nullable=False)
+    office = Column(String(50), nullable=False, default='All')
     location = Column(String(50), default='All')
     type = Column(String(20), default='National')
 
@@ -338,7 +344,7 @@ class RecognitionDB(Base):
     award_type = Column(String(50), nullable=False)
     title = Column(String(150), nullable=False)
     description = Column(Text, nullable=False)
-    given_by = Column(String(100), nullable=False)
+    given_by = Column("given_by_id", String(100), nullable=False)
     date = Column(Date, nullable=False)
 
 class TrainingDB(Base):
@@ -365,6 +371,8 @@ class PayrollDB(Base):
     paid_days = Column(Integer, default=30)
     lop_days = Column(Integer, default=0)
     leave_balance = Column(Float, default=10.5)
+    created_at = Column(ISO8601DateTime, nullable=False, default=datetime.datetime.now)
+
 
 class ClaimDB(Base):
     __tablename__ = 'claims'
@@ -381,18 +389,25 @@ class AssetDB(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=True)
     asset_name = Column("name", String(150), nullable=False)
-    serial_number = Column(String(100), nullable=False)
+    asset_id = Column("asset_id", String(50), nullable=False)
+    serial_number = Column(String(100), nullable=True)
+    specifications = Column(Text, nullable=True)
     status = Column(String(30), default='Assigned')
+    assigned_date = Column(Date, nullable=True)
+
+
 
 class AssetRequestDB(Base):
     __tablename__ = 'asset_requests'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column("employee_id", String(50), ForeignKey('employees.id', ondelete='CASCADE'), nullable=False)
-    request_type = Column(String(50), nullable=False)
+    request_type = Column("item_name", String(50), nullable=False)
     description = Column(Text, nullable=False)
+    priority = Column(String(20), nullable=False, default="Medium")
     status = Column(String(30), default='Submitted')
     created_at = Column(ISO8601DateTime, nullable=False)
-    admin_notes = Column(Text, nullable=True)
+    updated_at = Column(ISO8601DateTime, nullable=False, default=datetime.datetime.now)
+    admin_notes = Column("it_response", Text, nullable=True)
 
     @property
     def assigned_date(self):
@@ -539,23 +554,23 @@ class MockDatabase:
         
         self.payroll = {
             "user_id": "user-debarati",
-            "salary_base": 12500.00,
-            "salary_allowance": 4200.00,
-            "tax_deduction": 1850.00,
+            "salary_base": 189336.00,
+            "salary_allowance": 18934.00,
+            "tax_deduction": 9467.00,
             "increment_history": [
-                {"id": 1, "date": "2024-04-01", "old_salary": 11000.00, "new_salary": 13500.00, "percentage": 22.7},
-                {"id": 2, "date": "2025-04-01", "old_salary": 13500.00, "new_salary": 16700.00, "percentage": 23.7}
+                {"id": 1, "date": "2024-04-01", "old_salary": 124694.00, "new_salary": 153000.00, "percentage": 22.7},
+                {"id": 2, "date": "2025-04-01", "old_salary": 153000.00, "new_salary": 189336.00, "percentage": 23.7}
             ],
             "payslips": [
-                {"month": "May 2026", "net": 14850.00, "download_url": "#"},
-                {"month": "April 2026", "net": 14850.00, "download_url": "#"},
-                {"month": "March 2026", "net": 14850.00, "download_url": "#"}
+                {"month": "May 2026", "net": 198803.00, "download_url": "#"},
+                {"month": "April 2026", "net": 198803.00, "download_url": "#"},
+                {"month": "March 2026", "net": 198803.00, "download_url": "#"}
             ]
         }
+
         
         self.assets = [
-            {"id": 1, "user_id": "user-debarati", "asset_name": "MacBook Pro M3 Max (16-inch, Space Black)", "serial_number": "C02G2X89Q05D", "assigned_date": "2025-10-15", "status": "Assigned"},
-            {"id": 2, "user_id": "user-debarati", "asset_name": "Dell UltraSharp 27-inch 4K Monitor", "serial_number": "CN-0F8912-1082", "assigned_date": "2025-10-15", "status": "Assigned"}
+            {"id": 2, "user_id": "user-debarati", "asset_name": "Laptop", "asset_id": "TEK-LPT-002", "serial_number": "SN-LENOVO-T14-8812", "assigned_date": "2025-10-15", "status": "Allocated"}
         ]
         
         self.announcements = [
@@ -656,6 +671,7 @@ def init_db():
             conn.execute(text("ALTER TABLE payslips ADD COLUMN IF NOT EXISTS paid_days INTEGER DEFAULT 30;"))
             conn.execute(text("ALTER TABLE payslips ADD COLUMN IF NOT EXISTS lop_days INTEGER DEFAULT 0;"))
             conn.execute(text("ALTER TABLE payslips ADD COLUMN IF NOT EXISTS leave_balance FLOAT DEFAULT 10.5;"))
+            conn.execute(text("ALTER TABLE resources ADD COLUMN IF NOT EXISTS assigned_date DATE;"))
             
             conn.execute(text("ALTER TABLE holidays ADD COLUMN IF NOT EXISTS location VARCHAR(50) DEFAULT 'All';"))
             conn.execute(text("ALTER TABLE holidays ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'National';"))
@@ -786,6 +802,7 @@ def init_db():
                     name=h["name"],
                     date=datetime.date.fromisoformat(h["date"]),
                     day=h["day"],
+                    office=h["location"],
                     location=h["location"],
                     type=h["type"]
                 ))
@@ -795,18 +812,18 @@ def init_db():
         with engine.connect() as conn:
             conn.execute(text("UPDATE holidays SET location = 'All', type = 'National' WHERE location IS NULL OR type IS NULL;"))
             conn.execute(text("""
-                INSERT INTO holidays (name, date, day, location, type) 
-                SELECT 'Pongal', '2026-01-14', 'Wed', 'Chennai', 'State'
+                INSERT INTO holidays (name, date, day, office, location, type) 
+                SELECT 'Pongal', '2026-01-14', 'Wed', 'Chennai', 'Chennai', 'State'
                 WHERE NOT EXISTS (SELECT 1 FROM holidays WHERE name = 'Pongal' AND location = 'Chennai');
             """))
             conn.execute(text("""
-                INSERT INTO holidays (name, date, day, location, type) 
-                SELECT 'Karnataka Rajyotsava', '2026-11-01', 'Sun', 'Bangalore', 'State'
+                INSERT INTO holidays (name, date, day, office, location, type) 
+                SELECT 'Karnataka Rajyotsava', '2026-11-01', 'Sun', 'Bangalore', 'Bangalore', 'State'
                 WHERE NOT EXISTS (SELECT 1 FROM holidays WHERE name = 'Karnataka Rajyotsava' AND location = 'Bangalore');
             """))
             conn.execute(text("""
-                INSERT INTO holidays (name, date, day, location, type) 
-                SELECT 'Founders Day', '2026-10-15', 'Thu', 'All', 'Organization'
+                INSERT INTO holidays (name, date, day, office, location, type) 
+                SELECT 'Founders Day', '2026-10-15', 'Thu', 'All', 'All', 'Organization'
                 WHERE NOT EXISTS (SELECT 1 FROM holidays WHERE name = 'Founders Day');
             """))
             conn.commit()
@@ -1002,15 +1019,22 @@ def init_db():
         # Seed Payroll
         if db.query(PayrollDB).count() == 0:
             print("Seeding payroll table...")
-            db.add(PayrollDB(
-                user_id=mock_db.payroll["user_id"],
-                salary_base=mock_db.payroll["salary_base"],
-                salary_allowance=mock_db.payroll["salary_allowance"],
-                tax_deduction=mock_db.payroll["tax_deduction"],
-                increment_history=mock_db.payroll["increment_history"],
-                payslips=mock_db.payroll["payslips"]
-            ))
+            for month_idx in [5, 4, 3]:
+                db.add(PayrollDB(
+                    user_id="user-debarati",
+                    month=month_idx,
+                    year=2026,
+                    salary_base=189336.0,
+                    salary_allowance=18934.0,
+                    tax_deduction=9467.0,
+                    net=198803.0,
+                    status="Paid",
+                    paid_days=30,
+                    lop_days=0,
+                    leave_balance=24.0
+                ))
             db.commit()
+
 
         # Seed Claims
         if db.query(ClaimDB).count() == 0:
@@ -1033,6 +1057,7 @@ def init_db():
                 db.add(AssetDB(
                     user_id=a["user_id"],
                     asset_name=a["asset_name"],
+                    asset_id=a["asset_id"],
                     serial_number=a["serial_number"],
                     assigned_date=datetime.date.fromisoformat(a["assigned_date"]),
                     status=a["status"]
@@ -1066,8 +1091,8 @@ def init_db():
         # Seed Salary Revisions
         if db.query(SalaryRevisionDB).count() == 0:
             print("Seeding salary revisions table...")
-            db.add(SalaryRevisionDB(employee_id="user-debarati", change_date=datetime.date(2024, 4, 1), old_salary=11000.0, new_salary=13500.0, percentage=22.7, remarks="Annual performance cycle revision"))
-            db.add(SalaryRevisionDB(employee_id="user-debarati", change_date=datetime.date(2025, 4, 1), old_salary=13500.0, new_salary=16700.0, percentage=23.7, remarks="Promoted to Senior Consultant revision"))
+            db.add(SalaryRevisionDB(employee_id="user-debarati", change_date=datetime.date(2024, 4, 1), old_salary=124694.0, new_salary=153000.0, percentage=22.7, remarks="Annual performance cycle revision"))
+            db.add(SalaryRevisionDB(employee_id="user-debarati", change_date=datetime.date(2025, 4, 1), old_salary=153000.0, new_salary=189336.0, percentage=23.7, remarks="Promoted to Senior Consultant revision"))
             db.commit()
 
         # Seed Peer Review Assignments

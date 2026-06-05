@@ -51,22 +51,23 @@ def get_my_leaves(user_id: str = Depends(get_current_user_id), db = Depends(get_
 @router.get("/balance")
 def get_leave_balance(user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
     if db:
-        leaves_records = db.query(LeaveDB).filter(LeaveDB.user_id == user_id).all()
-        approved_taken = sum(l.num_days for l in leaves_records if l.status == "Approved")
-        
-        base_balance = 29.0
-        taken = approved_taken
-        balance = base_balance - taken
-        return {
-            "balance": max(0.0, balance),
-            "taken": taken,
-            "lop": 0.0
-        }
+        emp = db.query(ProfileDB).filter(ProfileDB.id == user_id).first()
+        if emp:
+            taken = emp.paid_leaves - emp.leave_balance
+            return {
+                "balance": float(emp.leave_balance),
+                "taken": float(taken),
+                "lop": float(emp.lop_days),
+                "paid_leaves": float(emp.paid_leaves),
+                "leave_year": emp.leave_year
+            }
         
     return {
-        "balance": 29.0,
-        "taken": 0.0,
-        "lop": 0.0
+        "balance": 24.0,
+        "taken": 8.0,
+        "lop": 0.0,
+        "paid_leaves": 24.0,
+        "leave_year": 2026
     }
 
 @router.get("/calculate-days")

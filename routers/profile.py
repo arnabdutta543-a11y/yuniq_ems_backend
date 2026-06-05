@@ -38,7 +38,12 @@ def serialize_profile(p: ProfileDB) -> dict:
         "office": p.office,
         "joining_date": p.joining_date.isoformat() if p.joining_date else None,
         "salary": float(p.salary) if p.salary else None,
-        "assigned_laptop": p.assigned_laptop
+        "assigned_laptop": p.assigned_laptop,
+        "paid_leaves": p.paid_leaves,
+        "leave_balance": p.leave_balance,
+        "lop_days": p.lop_days,
+        "leave_year": p.leave_year,
+        "admin_portal_access": p.admin_portal_access
     }
 
 @router.get("/me")

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import datetime
-from database import mock_db, get_db, PayrollDB, ClaimDB, ProfileDB
+from database import mock_db, get_db, PayrollDB, ClaimDB, ProfileDB, SalaryRevisionDB
 from routers.auth import get_current_user_id
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
@@ -24,6 +24,10 @@ def get_payroll_details(user_id: str = Depends(get_current_user_id), db = Depend
         # Get payslips from payslips table (mapped via PayrollDB)
         payslips_records = db.query(PayrollDB).filter(PayrollDB.user_id == user_id).order_by(PayrollDB.year.desc(), PayrollDB.month.desc()).all()
         
+        # Get current leave balance and LOP from employees table
+        current_balance = float(emp.leave_balance) if emp.leave_balance is not None else 24.0
+        lop_taken = float(emp.lop_days) if emp.lop_days is not None else 0.0
+
         # If no payslips exist, create one for May 2026 based on employee's salary
         if not payslips_records:
             salary_val = float(emp.salary) if emp.salary else 1800000.0
@@ -41,12 +45,22 @@ def get_payroll_details(user_id: str = Depends(get_current_user_id), db = Depend
                 salary_allowance=allowance,
                 tax_deduction=deductions,
                 net=net,
-                status="Paid"
+                status="Paid",
+                paid_days=int(30 - lop_taken),
+                lop_days=int(lop_taken),
+                leave_balance=current_balance
             )
             db.add(new_slip)
             db.commit()
             db.refresh(new_slip)
             payslips_records = [new_slip]
+        else:
+            # Sync the latest payslip's leave details with actual database state
+            latest = payslips_records[0]
+            latest.leave_balance = current_balance
+            latest.lop_days = int(lop_taken)
+            latest.paid_days = int(30 - lop_taken)
+            db.commit()
             
         latest = payslips_records[0]
         month_names = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
@@ -60,13 +74,23 @@ def get_payroll_details(user_id: str = Depends(get_current_user_id), db = Depend
                 "basic_salary": float(p.salary_base),
                 "allowances": float(p.salary_allowance),
                 "deductions": float(p.tax_deduction),
-                "status": p.status
+                "status": p.status,
+                "paid_days": p.paid_days,
+                "lop_days": p.lop_days,
+                "leave_balance": p.leave_balance
             })
             
-        increment_history = [
-            {"id": 1, "date": "2024-04-01", "old_salary": float(latest.salary_base) * 0.8, "new_salary": float(latest.salary_base) * 0.9, "percentage": 12.5},
-            {"id": 2, "date": "2025-04-01", "old_salary": float(latest.salary_base) * 0.9, "new_salary": float(latest.salary_base), "percentage": 11.1}
-        ]
+        revisions = db.query(SalaryRevisionDB).filter(SalaryRevisionDB.employee_id == user_id).order_by(SalaryRevisionDB.change_date.asc()).all()
+        increment_history = []
+        for r in revisions:
+            increment_history.append({
+                "id": r.id,
+                "date": r.change_date.isoformat(),
+                "old_salary": float(r.old_salary),
+                "new_salary": float(r.new_salary),
+                "percentage": float(r.percentage),
+                "remarks": r.remarks
+            })
         
         return {
             "user_id": user_id,

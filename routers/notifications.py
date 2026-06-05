@@ -45,3 +45,19 @@ def mark_notification_as_read(notif_id: str, user_id: str = Depends(get_current_
         raise HTTPException(status_code=404, detail="Notification not found")
     notif["read"] = True
     return {"message": "Notification marked as read", "notification": notif}
+
+@router.post("/read-all")
+def mark_all_notifications_as_read(user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
+    if db:
+        db.query(NotificationDB).filter(
+            NotificationDB.user_id == user_id,
+            NotificationDB.read == False
+        ).update({NotificationDB.read: True}, synchronize_session=False)
+        db.commit()
+        return {"message": "All notifications marked as read"}
+        
+    # Fallback to mock DB
+    for n in mock_db.notifications:
+        if n["user_id"] == user_id:
+            n["read"] = True
+    return {"message": "All notifications marked as read"}
