@@ -58,9 +58,9 @@ def send_onboarding_email(
         "vp" in role_lower
     )
     if is_manager_role:
-        onboarding_url = f"http://localhost:3001/onboarding?token={invitation_token}"
+        onboarding_url = f"{os.environ.get('FRONTEND_URL','http://localhost:3000')}/onboarding?token={invitation_token}"
     else:
-        onboarding_url = f"http://localhost:3000/onboarding?token={invitation_token}"
+        onboarding_url = f"{os.environ.get('FRONTEND_URL','http://localhost:3000')}/onboarding?token={invitation_token}"
 
     sender_suffix = f" from {sender_name}" if sender_name else ""
     if is_manager_role:
@@ -95,7 +95,7 @@ def send_onboarding_email(
                 <tr>
                   <td align="center">
                     <a href="{onboarding_url}" style="background-color: #22c55e; color: #020617; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 15px; display: inline-block;">
-                      {"Activate Administrative Account" if is_manager_role else "Set Up Your Password"}
+                      {"Set Up Your Password"}
                     </a>
                   </td>
                 </tr>
