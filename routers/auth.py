@@ -27,6 +27,15 @@ def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
         return "user-debarati"
     
     token = authorization.split(" ")[1]
+
+    # Handle mock tokens
+    if token.startswith("mock-jwt-token-"):
+        return token.replace("mock-jwt-token-", "")
+    elif token == "mock-admin-token":
+        return "admin-yuniq"
+    elif token == "mock-jwt-token":
+        return "user-debarati"
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
@@ -75,6 +84,15 @@ def login(data: LoginRequest, db = Depends(get_db)):
 
 @router.get("/me")
 def get_me(user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
+    if user_id == "admin-yuniq":
+        return {
+            "id": "admin-yuniq",
+            "full_name": "GLOBAL ADMIN",
+            "email": "admin@yuniq.com",
+            "role": "HR Manager",
+            "department": "HR",
+            "admin_portal_access": True
+        }
     if db:
         prof_record = db.query(ProfileDB).filter(ProfileDB.id == user_id).first()
         if prof_record:

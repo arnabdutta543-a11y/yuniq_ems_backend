@@ -207,8 +207,8 @@ def get_my_change_requests(user_id: str = Depends(get_current_user_id), db = Dep
             "id": r.id,
             "request_data": r.request_data,
             "status": r.status,
-            "created_at": r.created_at.isoformat(),
-            "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+            "created_at": r.created_at.isoformat() if hasattr(r.created_at, "isoformat") else r.created_at,
+            "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at and hasattr(r.reviewed_at, "isoformat") else r.reviewed_at,
             "hr_remarks": r.hr_remarks
         } for r in reqs]
     return []
@@ -231,8 +231,8 @@ def get_all_change_requests(user_id: str = Depends(get_current_user_id), db = De
                 "employee_name": emp.full_name if emp else "Unknown",
                 "request_data": r.request_data,
                 "status": r.status,
-                "created_at": r.created_at.isoformat(),
-                "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+                "created_at": r.created_at.isoformat() if hasattr(r.created_at, "isoformat") else r.created_at,
+                "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at and hasattr(r.reviewed_at, "isoformat") else r.reviewed_at,
                 "hr_remarks": r.hr_remarks
             })
         return results
