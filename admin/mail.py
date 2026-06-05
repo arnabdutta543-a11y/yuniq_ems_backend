@@ -57,10 +57,11 @@ def send_onboarding_email(
         "head" in role_lower or
         "vp" in role_lower
     )
-    if is_manager_role:
-        onboarding_url = f"{os.environ.get('FRONTEND_URL','http://localhost:3000')}/onboarding?token={invitation_token}"
-    else:
-        onboarding_url = f"{os.environ.get('FRONTEND_URL','http://localhost:3000')}/onboarding?token={invitation_token}"
+    frontend_url = os.environ.get('FRONTEND_URL')
+    if not frontend_url or not frontend_url.strip():
+        frontend_url = 'http://localhost:3000'
+
+    onboarding_url = f"{frontend_url}/onboarding?token={invitation_token}"
 
     sender_suffix = f" from {sender_name}" if sender_name else ""
     if is_manager_role:
