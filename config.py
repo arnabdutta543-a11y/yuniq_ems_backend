@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     SMTP_USER: Optional[str] = os.getenv("SMTP_USER", "")
     SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD", "")
     
+    # Frontend URL for Onboarding redirects
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
     # Mock Mode configuration (force or fallback)
     FORCE_MOCK: bool = os.getenv("FORCE_MOCK", "false").lower() == "true"
     
@@ -47,5 +50,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 settings = Settings()
