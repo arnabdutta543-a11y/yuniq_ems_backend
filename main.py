@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from config import settings
@@ -82,6 +82,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Trust X-Forwarded-Proto header to handle secure redirects correctly behind Railway reverse proxy
+@app.middleware("http")
+async def forward_proto_middleware(request: Request, call_next):
+    if request.headers.get("x-forwarded-proto") == "https":
+        request.scope["scheme"] = "https"
+    return await call_next(request)
 
 # ── Static file mounts ─────────────────────────────────────────────────────────
 import os

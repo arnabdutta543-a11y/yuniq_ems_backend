@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD", "")
     
     # Frontend URL for Onboarding redirects
-    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://yuniq-ems-frontend.vercel.app")
 
     # Mock Mode configuration (force or fallback)
     FORCE_MOCK: bool = os.getenv("FORCE_MOCK", "false").lower() == "true"

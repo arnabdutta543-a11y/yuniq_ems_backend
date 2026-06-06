@@ -59,7 +59,7 @@ def send_onboarding_email(
     )
     frontend_url = os.environ.get('FRONTEND_URL')
     if not frontend_url or not frontend_url.strip():
-        frontend_url = 'http://localhost:3000'
+        frontend_url = 'https://yuniq-ems-frontend.vercel.app'
 
     onboarding_url = f"{frontend_url}/onboarding?token={invitation_token}"
 
