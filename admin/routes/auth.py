@@ -1,11 +1,29 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from admin.database import get_db
 from admin import models, schemas
+from admin.utils import get_password_hash, verify_password
 import uuid
+import datetime
+from pydantic import BaseModel, EmailStr
 
 router = APIRouter(prefix="/auth", tags=["Admin Authentication"])
+
+# In-memory OTP store: email -> {"otp": str, "expires_at": datetime.datetime}
+otp_store = {}
+
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+class VerifyOtpIn(BaseModel):
+    email: EmailStr
+    otp: str
+
+class ResetPasswordIn(BaseModel):
+    email: EmailStr
+    otp: str
+    password: str
 
 @router.post("/signup")
 def signup(user_in: schemas.UserSignUp, db: Session = Depends(get_db)):
@@ -32,7 +50,7 @@ def signup(user_in: schemas.UserSignUp, db: Session = Depends(get_db)):
         personal_email=user_in.email,
         office="Kolkata",
         status="Active",
-        password_hash=user_in.password,
+        password_hash=get_password_hash(user_in.password),
         admin_portal_access=True
     )
 
@@ -65,7 +83,8 @@ def signup(user_in: schemas.UserSignUp, db: Session = Depends(get_db)):
 def signin(user_in: schemas.UserSignIn, db: Session = Depends(get_db)):
     user = db.query(models.Employee).filter(models.Employee.email == user_in.email).first()
 
-    if not user:
+    # Block sign-in if user does not exist or status is pending onboarding
+    if not user or user.status == "Pending":
         if user_in.email == "admin@yuniq.com" and user_in.password == "admin123":
             fallback_perms = [
                 "tabs.dashboard", "tabs.employees", "tabs.invitations", "tabs.leaves",
@@ -91,11 +110,12 @@ def signin(user_in: schemas.UserSignIn, db: Session = Depends(get_db)):
                 }
             }
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email ID or password."
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="you are not registered with us"
         )
 
-    if user.password_hash and user.password_hash != user_in.password:
+    # Use verify_password helper for password comparisons
+    if not verify_password(user_in.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect password."
@@ -118,7 +138,6 @@ def signin(user_in: schemas.UserSignIn, db: Session = Depends(get_db)):
 
 @router.get("/onboarding/verify", response_model=schemas.OnboardingVerifyOut)
 def verify_onboarding(token: str, db: Session = Depends(get_db)):
-    import datetime
     inv = db.query(models.OnboardingInvitation).filter(
         models.OnboardingInvitation.invitation_token == token
     ).first()
@@ -145,7 +164,6 @@ def verify_onboarding(token: str, db: Session = Depends(get_db)):
 
 @router.post("/onboarding/complete")
 def complete_onboarding(data: schemas.OnboardingCompleteIn, db: Session = Depends(get_db)):
-    import datetime
     inv = db.query(models.OnboardingInvitation).filter(
         models.OnboardingInvitation.invitation_token == data.token
     ).first()
@@ -160,7 +178,7 @@ def complete_onboarding(data: schemas.OnboardingCompleteIn, db: Session = Depend
     if not emp:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found.")
 
-    emp.password_hash = data.password
+    emp.password_hash = get_password_hash(data.password)
     emp.status = "Active"
     inv.used = True
     db.commit()
@@ -177,5 +195,150 @@ def complete_onboarding(data: schemas.OnboardingCompleteIn, db: Session = Depend
             "office": emp.office,
             "permissions": emp.resolved_permissions,
             "admin_portal_access": emp.admin_portal_access
+        }
+    }
+
+
+@router.post("/forgot-password")
+def forgot_password(data: ForgotPasswordIn, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    import random
+    from admin.mail import send_notification_email
+    
+    # Check if user exists
+    user = db.query(models.Employee).filter(models.Employee.email == data.email).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="you are not registered with us"
+        )
+        
+    # Check if user has not verified their account (onboarding pending)
+    if not user.password_hash or user.status == "Pending":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="first set up the new password using the onboarding mail..your account is not verified..."
+        )
+        
+    now = datetime.datetime.utcnow()
+    # Clean up expired entries to prevent memory growth
+    expired_emails = [e for e, info in otp_store.items() if info["expires_at"] < now]
+    for e in expired_emails:
+        otp_store.pop(e, None)
+        
+    # Generate 6-digit verification code
+    otp = f"{random.randint(100000, 999999)}"
+    expires_at = now + datetime.timedelta(minutes=10)
+    otp_store[data.email] = {
+        "otp": otp,
+        "expires_at": expires_at
+    }
+    
+    # Format and queue reset email
+    subject = "YuniQ Password Reset OTP"
+    category = "SECURITY"
+    content_html = f"""
+    <p style="color:#ffffff; font-size:16px;">We received a request to reset your YuniQ account password.</p>
+    <p style="color:#ffffff; font-size:16px;">Your 6-digit verification OTP is:</p>
+    <div style="background-color:#1e293b; padding:15px; border-radius:6px; margin-bottom:25px; text-align:center; font-size:24px; font-weight:bold; letter-spacing:5px; color:#e8302a; border: 1px solid #334155;">
+      {otp}
+    </div>
+    <p style="color:#64748b;font-size:14px;">This OTP is valid for 10 minutes. If you did not request a password reset, please ignore this email or contact support.</p>
+    """
+    
+    background_tasks.add_task(
+        send_notification_email,
+        to_email=data.email,
+        employee_name=user.full_name,
+        subject=subject,
+        category=category,
+        content_html=content_html,
+        status_color="#e8302a"
+    )
+    
+    return {"message": "Verification OTP has been sent to your email."}
+
+
+@router.post("/verify-otp")
+def verify_otp(data: VerifyOtpIn):
+    info = otp_store.get(data.email)
+    if not info:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No OTP requested for this email."
+        )
+        
+    if datetime.datetime.utcnow() > info["expires_at"]:
+        otp_store.pop(data.email, None)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OTP has expired. Please request a new one."
+        )
+        
+    if info["otp"] != data.otp:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Incorrect OTP. Please try again."
+        )
+        
+    return {"message": "OTP verified successfully."}
+
+
+@router.post("/reset-password")
+def reset_password(data: ResetPasswordIn, db: Session = Depends(get_db)):
+    info = otp_store.get(data.email)
+    if not info:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No OTP verification session found."
+        )
+        
+    if datetime.datetime.utcnow() > info["expires_at"]:
+        otp_store.pop(data.email, None)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OTP has expired. Please request a new one."
+        )
+        
+    if info["otp"] != data.otp:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Incorrect OTP."
+        )
+        
+    user = db.query(models.Employee).filter(models.Employee.email == data.email).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Employee not found."
+        )
+        
+    user.password_hash = get_password_hash(data.password)
+    user.status = "Active"
+    
+    # Set invitation to used if it exists
+    inv = db.query(models.OnboardingInvitation).filter(
+        models.OnboardingInvitation.employee_id == user.id,
+        models.OnboardingInvitation.used == False
+    ).first()
+    if inv:
+        inv.used = True
+        
+    db.commit()
+    db.refresh(user)
+    
+    otp_store.pop(data.email, None)
+    
+    return {
+        "message": "Password reset successfully. You can now login.",
+        "access_token": f"mock-jwt-token-{user.id}",
+        "profile": {
+            "id": user.id,
+            "full_name": user.full_name,
+            "email": user.email,
+            "role": user.role,
+            "department": user.department,
+            "office": user.office,
+            "permissions": user.resolved_permissions,
+            "admin_portal_access": user.admin_portal_access
         }
     }

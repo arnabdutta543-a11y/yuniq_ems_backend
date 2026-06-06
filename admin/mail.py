@@ -15,18 +15,20 @@ NOTIFICATION_LOG_FILE = os.path.join(LOG_DIR, "notifications.log")
 def _attach_logo_if_exists(msg: MIMEMultipart) -> None:
     """Helper function to load the local yuniq logo and embed it as an inline CID attachment."""
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    logo_path = os.path.join(base_dir, "frontend", "yuniq logo.png")
-
-    if os.path.exists(logo_path):
-        try:
-            with open(logo_path, "rb") as f:
-                img_data = f.read()
-            msg_image = MIMEImage(img_data)
-            msg_image.add_header("Content-ID", "<yuniq_logo>")
-            msg_image.add_header("Content-Disposition", "inline", filename="yuniq_logo.png")
-            msg.attach(msg_image)
-        except Exception as e:
-            print(f"Failed to attach logo to email: {e}")
+    for filename in ["yuniq-logo.png", "logo.png", "logo-small.png"]:
+        logo_path = os.path.join(base_dir, "main", "public", filename)
+        if os.path.exists(logo_path):
+            try:
+                with open(logo_path, "rb") as f:
+                    img_data = f.read()
+                msg_image = MIMEImage(img_data)
+                msg_image.add_header("Content-ID", "<yuniq_logo>")
+                msg_image.add_header("Content-Disposition", "inline", filename=filename)
+                msg.attach(msg_image)
+                print(f"Attached logo: {logo_path}")
+                return
+            except Exception as e:
+                print(f"Failed to attach logo ({logo_path}) to email: {e}")
 
 
 def send_onboarding_email(
@@ -82,9 +84,9 @@ def send_onboarding_email(
       <td align="center">
         <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 550px; background-color: #0f172a; border: 1px solid #334155; border-radius: 12px; overflow: hidden;">
           <tr>
-            <td style="background: linear-gradient(135deg, #22c55e 0%, #10b981 100%); padding: 35px 40px; text-align: center;">
+            <td style="background: linear-gradient(135deg, #e8302a 0%, #a81c18 100%); padding: 35px 40px; text-align: center;">
               <div style="margin-bottom: 10px;"><img src="cid:yuniq_logo" alt="YuniQ Logo" style="height: 45px; max-width: 180px; display: block; margin: 0 auto;"/></div>
-              <div style="font-size: 13px; font-weight: 700; color: #020617; text-transform: uppercase; letter-spacing: 3px; margin-top: 5px;">{"Administrative Console" if is_manager_role else "Employee Portal"}</div>
+              <div style="font-size: 13px; font-weight: 700; color: #ffffff; text-transform: uppercase; letter-spacing: 3px; margin-top: 5px;">{"Administrative Console" if is_manager_role else "Employee Portal"}</div>
             </td>
           </tr>
           <tr>
@@ -95,7 +97,7 @@ def send_onboarding_email(
               <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 30px;">
                 <tr>
                   <td align="center">
-                    <a href="{onboarding_url}" style="background-color: #22c55e; color: #020617; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 15px; display: inline-block;">
+                    <a href="{onboarding_url}" style="background-color: #e8302a; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 15px; display: inline-block; box-shadow: 0 4px 12px rgba(232, 48, 42, 0.3);">
                       {"Set Up Your Password"}
                     </a>
                   </td>

@@ -6,6 +6,7 @@ from typing import List, Optional
 from admin.database import get_db
 from admin import models, schemas
 from admin.mail import send_onboarding_email
+from admin.auth_deps import admin_access_required
 
 router = APIRouter(prefix="/employees", tags=["Admin Employees"])
 
@@ -405,3 +406,101 @@ def get_employee_leave_summary(id: str, db: Session = Depends(get_db)):
         carry_forward=carry_forward,
         leave_history=leave_history,
     )
+
+@router.get("/attendance/summary", response_model=List[schemas.AttendanceSummaryRecordOut])
+def get_attendance_summary(
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(admin_access_required)
+):
+    # Determine permission to view all employees
+    is_allowed_all = False
+    if current_user_id == "admin-yuniq":
+        is_allowed_all = True
+    else:
+        admin_emp = db.query(models.Employee).filter(models.Employee.id == current_user_id).first()
+        if admin_emp:
+            role_lower = admin_emp.role.lower() if admin_emp.role else ""
+            if (admin_emp.email == "admin@yuniq.com" or 
+                admin_emp.role in ["CEO", "HR Manager", "Admin"] or 
+                "ceo" in role_lower or 
+                ("hr" in role_lower and "manager" in role_lower)):
+                is_allowed_all = True
+            else:
+                perms = admin_emp.resolved_permissions
+                if "actions.view_employee_details" in perms:
+                    is_allowed_all = True
+
+    # Query employees based on access
+    if is_allowed_all:
+        employees = db.query(models.Employee).all()
+    else:
+        # Show only subordinates
+        employees = db.query(models.Employee).filter(models.Employee.manager_id == current_user_id).all()
+
+    # Now gather attendance logs for these employees
+    results = []
+    for emp in employees:
+        logs = db.query(models.Attendance).filter(models.Attendance.employee_id == emp.id).order_by(models.Attendance.date.desc()).all()
+        
+        # Group logs for this employee by date
+        from collections import defaultdict
+        date_logs = defaultdict(list)
+        for log in logs:
+            if log.date:
+                date_logs[log.date].append(log)
+            
+        for d, logs_on_date in date_logs.items():
+            # Find the earliest punch_in_at and latest punch_out_at across all logs on this date
+            earliest_in = None
+            for log in logs_on_date:
+                if log.punch_in_at:
+                    if earliest_in is None or log.punch_in_at < earliest_in:
+                        earliest_in = log.punch_in_at
+            
+            has_active = any(log.punch_out_at is None for log in logs_on_date)
+            latest_out = None
+            if not has_active:
+                for log in logs_on_date:
+                    if log.punch_out_at:
+                        if latest_out is None or log.punch_out_at > latest_out:
+                            latest_out = log.punch_out_at
+            
+            total_hours = sum(float(l.total_hours) for l in logs_on_date if l.total_hours is not None)
+            
+            status = "Office"
+            for log in logs_on_date:
+                if log.activity_log:
+                    try:
+                        for act in log.activity_log:
+                            if isinstance(act, dict) and act.get("action") == "WFH":
+                                status = "WFH"
+                                break
+                    except Exception:
+                        pass
+            
+            def format_utc_datetime(dt):
+                if dt is None:
+                    return None
+                if isinstance(dt, datetime.datetime):
+                    if dt.tzinfo is None:
+                        return dt.isoformat() + "Z"
+                    return dt.isoformat()
+                if isinstance(dt, str):
+                    if not dt.endswith("Z") and "+" not in dt:
+                        return dt + "Z"
+                    return dt
+                return dt
+
+            results.append(schemas.AttendanceSummaryRecordOut(
+                id=logs_on_date[0].id,
+                employee_id=emp.id,
+                employee_name=emp.full_name,
+                department=emp.department,
+                role=emp.role,
+                date=d,
+                punch_in_at=format_utc_datetime(earliest_in),
+                punch_out_at=format_utc_datetime(latest_out) if latest_out else None,
+                total_hours=round(total_hours, 2),
+                status=status
+            ))
+    return results

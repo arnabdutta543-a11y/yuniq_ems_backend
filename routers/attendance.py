@@ -3,6 +3,8 @@ from typing import List, Optional
 import datetime
 from database import mock_db, get_db, AttendanceLogDB, NotificationDB
 from routers.auth import get_current_user_id
+from pydantic import BaseModel
+
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -45,12 +47,19 @@ def get_attendance_status(user_id: str = Depends(get_current_user_id), db = Depe
             elapsed = (now - p_in).total_seconds() / 3600.0
             total_hours += elapsed
             
+        status = "Office"
+        for act in activity_log:
+            if isinstance(act, dict) and act.get("action") == "WFH":
+                status = "WFH"
+                break
+            
         return {
             "date": today_str,
             "is_punched_in": is_punched_in,
             "last_punch_in": last_punch_in,
             "total_hours": round(total_hours, 2),
-            "activity_log": activity_log
+            "activity_log": activity_log,
+            "status": status
         }
         
     # Fallback to mock DB
@@ -67,12 +76,19 @@ def get_attendance_status(user_id: str = Depends(get_current_user_id), db = Depe
         elapsed = (now - p_in).total_seconds() / 3600.0
         total_hours += elapsed
         
+    status = "Office"
+    for act in activity_log:
+        if isinstance(act, dict) and act.get("action") == "WFH":
+            status = "WFH"
+            break
+        
     return {
         "date": today_str,
         "is_punched_in": punch_in_time is not None,
         "last_punch_in": punch_in_time,
         "total_hours": round(total_hours, 2),
-        "activity_log": activity_log
+        "activity_log": activity_log,
+        "status": status
     }
 
 @router.post("/punch-in")
@@ -216,6 +232,82 @@ def punch_out(user_id: str = Depends(get_current_user_id), db = Depends(get_db))
     })
     return {"message": "Punched out successfully", "time": now_str, "session_hours": round(elapsed_hours, 2)}
 
+class WFHPayload(BaseModel):
+    date: str
+    reason: str
+
+@router.post("/wfh")
+def log_wfh(payload: WFHPayload, user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
+    try:
+        target_date = datetime.date.fromisoformat(payload.date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+        
+    now_str = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    
+    if db:
+        # Check if WFH or any attendance is already logged for this user on this date
+        existing_logs = db.query(AttendanceLogDB).filter(
+            AttendanceLogDB.user_id == user_id,
+            AttendanceLogDB.date == target_date
+        ).all()
+        
+        for log in existing_logs:
+            if log.activity_log:
+                for act in log.activity_log:
+                    if isinstance(act, dict) and act.get("action") == "WFH":
+                        raise HTTPException(status_code=400, detail="WFH already logged for this date")
+        
+        wfh_log = AttendanceLogDB(
+            user_id=user_id,
+            date=target_date,
+            punch_in_at=payload.date + "T09:00:00Z",
+            punch_out_at=payload.date + "T17:00:00Z",
+            total_hours=8.0,
+            activity_log=[{"time": now_str, "action": "WFH", "reason": payload.reason}]
+        )
+        db.add(wfh_log)
+        
+        # Add Notification
+        new_notif = NotificationDB(
+            id=f"notif-{int(datetime.datetime.now().timestamp())}",
+            user_id=user_id,
+            title="WFH Logged",
+            message=f"WFH schedule logged successfully for {payload.date}.",
+            read=False,
+            created_at=now_str
+        )
+        db.add(new_notif)
+        db.commit()
+        return {"message": "WFH logged successfully"}
+        
+    # Fallback to mock DB
+    existing_logs = [log for log in mock_db.attendance_logs if log["user_id"] == user_id and log["date"] == payload.date]
+    for log in existing_logs:
+        for act in log.get("activity_log", []):
+            if act.get("action") == "WFH":
+                raise HTTPException(status_code=400, detail="WFH already logged for this date")
+                
+    wfh_log = {
+        "id": f"att-{len(mock_db.attendance_logs) + 1}",
+        "user_id": user_id,
+        "date": payload.date,
+        "punch_in_at": payload.date + "T09:00:00Z",
+        "punch_out_at": payload.date + "T17:00:00Z",
+        "total_hours": 8.0,
+        "activity_log": [{"time": now_str, "action": "WFH", "reason": payload.reason}]
+    }
+    mock_db.attendance_logs.append(wfh_log)
+    mock_db.notifications.append({
+        "id": f"notif-{len(mock_db.notifications) + 1}",
+        "user_id": user_id,
+        "title": "WFH Logged",
+        "message": f"WFH schedule logged successfully for {payload.date}.",
+        "read": False,
+        "created_at": now_str
+    })
+    return {"message": "WFH logged successfully"}
+
 @router.get("/statistics")
 def get_attendance_statistics(user_id: str = Depends(get_current_user_id), db = Depends(get_db)):
     today = datetime.date.today()
@@ -297,15 +389,36 @@ def get_attendance_history(user_id: str = Depends(get_current_user_id), db = Dep
             AttendanceLogDB.user_id == user_id
         ).order_by(AttendanceLogDB.date.desc()).limit(30).all()
         
-        return [{
-            "id": log.id,
-            "date": log.date.isoformat(),
-            "punch_in_at": log.punch_in_at,
-            "punch_out_at": log.punch_out_at,
-            "total_hours": float(log.total_hours)
-        } for log in logs]
+        res = []
+        for log in logs:
+            status = "Office"
+            if log.activity_log:
+                for act in log.activity_log:
+                    if isinstance(act, dict) and act.get("action") == "WFH":
+                        status = "WFH"
+                        break
+            res.append({
+                "id": log.id,
+                "date": log.date.isoformat(),
+                "punch_in_at": log.punch_in_at,
+                "punch_out_at": log.punch_out_at,
+                "total_hours": float(log.total_hours),
+                "status": status
+            })
+        return res
         
     # Fallback to mock DB
     user_logs = [log for log in mock_db.attendance_logs if log["user_id"] == user_id]
     user_logs = sorted(user_logs, key=lambda x: x["date"], reverse=True)[:30]
-    return user_logs
+    res = []
+    for log in user_logs:
+        status = "Office"
+        for act in log.get("activity_log", []):
+            if act.get("action") == "WFH":
+                status = "WFH"
+                break
+        res.append({
+            **log,
+            "status": status
+        })
+    return res

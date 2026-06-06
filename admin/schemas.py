@@ -498,3 +498,18 @@ class OKROut(OKRBase):
 
     class Config:
         from_attributes = True
+
+class AttendanceSummaryRecordOut(BaseModel):
+    id: int
+    employee_id: str
+    employee_name: str
+    department: str
+    role: str
+    date: Any
+    punch_in_at: Any
+    punch_out_at: Any = None
+    total_hours: float
+    status: str
+
+    class Config:
+        from_attributes = True

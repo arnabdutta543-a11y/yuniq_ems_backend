@@ -138,6 +138,7 @@ class Employee(Base):
                 "tabs.timesheets", "tabs.travel", "tabs.performance", "tabs.payslips",
                 "tabs.holidays", "tabs.resources", "tabs.config", "tabs.notifications",
                 "tabs.recognitions", "tabs.trainings", "tabs.asset_requests", "tabs.policies",
+                "tabs.attendance_summary",
                 "actions.manage_employees", "actions.add_employee", "actions.edit_employee", "actions.delete_employee", "actions.view_employee_details",
                 "actions.manage_invitations", "actions.manage_leaves",
                 "actions.manage_timesheets", "actions.manage_travel", "actions.manage_performance",
@@ -151,6 +152,7 @@ class Employee(Base):
                 "tabs.timesheets", "tabs.travel", "tabs.performance", "tabs.payslips",
                 "tabs.holidays", "tabs.resources", "tabs.config", "tabs.notifications",
                 "tabs.recognitions", "tabs.trainings", "tabs.asset_requests", "tabs.policies",
+                "tabs.attendance_summary",
                 "actions.manage_employees", "actions.add_employee", "actions.edit_employee", "actions.delete_employee", "actions.view_employee_details",
                 "actions.manage_invitations", "actions.manage_leaves",
                 "actions.manage_timesheets", "actions.manage_travel", "actions.manage_performance",
@@ -162,6 +164,7 @@ class Employee(Base):
             return [
                 "tabs.dashboard", "tabs.holidays", "tabs.resources",
                 "tabs.trainings", "tabs.asset_requests", "tabs.policies",
+                "tabs.attendance_summary",
                 "actions.manage_resources", "actions.manage_holidays",
                 "actions.manage_trainings", "actions.manage_asset_requests"
             ]
@@ -178,6 +181,7 @@ class Employee(Base):
                 "tabs.dashboard", "tabs.employees", "tabs.leaves", "tabs.timesheets",
                 "tabs.travel", "tabs.performance", "tabs.payslips", "tabs.holidays", "tabs.notifications",
                 "tabs.recognitions", "tabs.trainings", "tabs.asset_requests", "tabs.policies",
+                "tabs.attendance_summary",
                 "actions.view_employee_details",
                 "actions.manage_leaves", "actions.manage_timesheets", "actions.manage_travel",
                 "actions.manage_performance", "actions.manage_notifications", "actions.manage_recognitions",
