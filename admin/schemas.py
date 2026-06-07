@@ -78,6 +78,8 @@ class UserSignUp(BaseModel):
     email: EmailStr
     password: str
     full_name: str
+    role: str
+    secret_key: str
 
 class UserSignIn(BaseModel):
     email: EmailStr

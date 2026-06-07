@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USER: Optional[str] = os.getenv("SMTP_USER", "")
     SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD", "")
+    SIGNUP_SECRET_KEY: str = os.getenv("SIGNUP_SECRET_KEY", "yuniq_secret_signup_key_2026")
     
     # Frontend URL for Onboarding redirects
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://yuniq-ems-frontend.vercel.app")

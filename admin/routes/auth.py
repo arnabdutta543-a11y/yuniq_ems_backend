@@ -7,6 +7,7 @@ from admin.utils import get_password_hash, verify_password
 import uuid
 import datetime
 from pydantic import BaseModel, EmailStr
+from config import settings
 
 router = APIRouter(prefix="/auth", tags=["Admin Authentication"])
 
@@ -27,6 +28,12 @@ class ResetPasswordIn(BaseModel):
 
 @router.post("/signup")
 def signup(user_in: schemas.UserSignUp, db: Session = Depends(get_db)):
+    if user_in.secret_key != settings.SIGNUP_SECRET_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid signup secret key."
+        )
+
     existing = db.query(models.Employee).filter(models.Employee.email == user_in.email).first()
     if existing:
         raise HTTPException(
@@ -38,15 +45,24 @@ def signup(user_in: schemas.UserSignUp, db: Session = Depends(get_db)):
     short_uuid = uuid.uuid4().hex[:6]
     emp_id = f"user-{name_slug}-{short_uuid}"
 
+    role = user_in.role or "Associate Consultant"
+    role_lower = role.lower()
+    if "hr" in role_lower or "recruit" in role_lower or "talent" in role_lower:
+        department = "HR"
+    elif "engineer" in role_lower or "architect" in role_lower or "dev" in role_lower or "consultant" in role_lower:
+        department = "DECISIONS"
+    else:
+        department = "Management"
+
     db_user = models.Employee(
         id=emp_id,
         full_name=user_in.full_name,
         email=user_in.email,
-        role="HR Manager",
-        department="HR",
+        role=role,
+        department=department,
         manager_id=None,
         salary=100000.0,
-        joining_date=None,
+        joining_date=datetime.date.today(),
         personal_email=user_in.email,
         office="Kolkata",
         status="Active",
